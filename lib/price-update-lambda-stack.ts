@@ -4,10 +4,18 @@ import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as events from 'aws-cdk-lib/aws-events';
 import * as targets from 'aws-cdk-lib/aws-events-targets';
+import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 
 export class PriceUpdateLambdaStack extends Stack {
   constructor(scope: Construct, id: string, props?: StackProps) {
     super(scope, id, props);
+
+    // Create DynamoDB table
+    const productsTable = new dynamodb.Table(this, 'ProductsTable', {
+      tableName: 'terratree-products',
+      partitionKey: { name: 'asin', type: dynamodb.AttributeType.STRING },
+      sortKey: { name: 'marketplace_id', type: dynamodb.AttributeType.STRING }
+    });
 
     // Define the Lambda function
     const priceLambda = new lambda.Function(this, 'PriceUpdateHandler', {
@@ -26,11 +34,7 @@ export class PriceUpdateLambdaStack extends Stack {
     });
 
     // Grant DynamoDB access
-    const tableArn = `arn:aws:dynamodb:${this.region}:${this.account}:table/terratree-products`;
-    priceLambda.addToRolePolicy(new iam.PolicyStatement({
-      actions: ['dynamodb:UpdateItem'],
-      resources: [tableArn]
-    }));
+    productsTable.grantWriteData(priceLambda);
 
     // Allow Lambda to be triggered by EventBridge
     const eventRule = new events.Rule(this, 'PriceChangeEventRule', {

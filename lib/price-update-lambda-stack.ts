@@ -11,8 +11,11 @@ export class PriceUpdateLambdaStack extends Stack {
   constructor(scope: Construct, id: string, props?: StackProps) {
     super(scope, id, props);
 
-    // Reference database secrets
+    // Reference secrets
     const dbSecret = secretsmanager.Secret.fromSecretNameV2(this, 'DatabaseSecret', 'terratree/production_db');
+    const lwaAppIdSecret = secretsmanager.Secret.fromSecretNameV2(this, 'LwaAppIdSecret', 'lwa_app_id');
+    const lwaClientSecret = secretsmanager.Secret.fromSecretNameV2(this, 'LwaClientSecret', 'lwa_client_secret');
+    const refreshTokenSecret = secretsmanager.Secret.fromSecretNameV2(this, 'RefreshTokenSecret', 'refresh_token');
 
     // Create DynamoDB table
     const productsTable = new dynamodb.Table(this, 'ProductsTable', {
@@ -28,11 +31,12 @@ export class PriceUpdateLambdaStack extends Stack {
       code: lambda.Code.fromAsset('lambda'),
       environment: {
         DYNAMODB_TABLE: 'terratree-products',
-        SPAPI_ACCESS_TOKEN: 'REPLACE_WITH_TOKEN', // Use Secrets Manager in production
         MARKUP_PERCENTAGE: '15',
-        SELLER_ID: 'REPLACE_WITH_SELLER_ID',
         MARKETPLACE_ID: 'ATVPDKIKX0DER',
-        DB_SECRET_ARN: dbSecret.secretArn
+        DB_SECRET_ARN: dbSecret.secretArn,
+        LWA_APP_ID_SECRET_ARN: lwaAppIdSecret.secretArn,
+        LWA_CLIENT_SECRET_ARN: lwaClientSecret.secretArn,
+        REFRESH_TOKEN_SECRET_ARN: refreshTokenSecret.secretArn
       },
       timeout: Duration.seconds(30),
       memorySize: 256
@@ -41,6 +45,9 @@ export class PriceUpdateLambdaStack extends Stack {
     // Grant DynamoDB and Secrets Manager access
     productsTable.grantWriteData(priceLambda);
     dbSecret.grantRead(priceLambda);
+    lwaAppIdSecret.grantRead(priceLambda);
+    lwaClientSecret.grantRead(priceLambda);
+    refreshTokenSecret.grantRead(priceLambda);
 
     // Allow Lambda to be triggered by EventBridge
     const eventRule = new events.Rule(this, 'PriceChangeEventRule', {

@@ -10,8 +10,11 @@ export class SpapiPollerStack extends Stack {
   constructor(scope: Construct, id: string, props?: StackProps) {
     super(scope, id, props);
 
-    // Reference database secrets and DynamoDB table
+    // Reference secrets and DynamoDB table
     const dbSecret = secretsmanager.Secret.fromSecretNameV2(this, 'DatabaseSecret', 'terratree/production_db');
+    const lwaAppIdSecret = secretsmanager.Secret.fromSecretNameV2(this, 'LwaAppIdSecret', 'lwa_app_id');
+    const lwaClientSecret = secretsmanager.Secret.fromSecretNameV2(this, 'LwaClientSecret', 'lwa_client_secret');
+    const refreshTokenSecret = secretsmanager.Secret.fromSecretNameV2(this, 'RefreshTokenSecret', 'refresh_token');
     const productsTable = dynamodb.Table.fromTableName(this, 'ProductsTable', 'terratree-products');
 
     // SP-API Poller Lambda
@@ -21,9 +24,11 @@ export class SpapiPollerStack extends Stack {
       code: lambda.Code.fromAsset('lambda'),
       environment: {
         DYNAMODB_TABLE: 'terratree-products',
-        SPAPI_ACCESS_TOKEN: 'REPLACE_WITH_TOKEN',
         MARKETPLACE_ID: 'ATVPDKIKX0DER',
-        DB_SECRET_ARN: dbSecret.secretArn
+        DB_SECRET_ARN: dbSecret.secretArn,
+        LWA_APP_ID_SECRET_ARN: lwaAppIdSecret.secretArn,
+        LWA_CLIENT_SECRET_ARN: lwaClientSecret.secretArn,
+        REFRESH_TOKEN_SECRET_ARN: refreshTokenSecret.secretArn
       },
       timeout: Duration.minutes(5),
       memorySize: 512
@@ -32,6 +37,9 @@ export class SpapiPollerStack extends Stack {
     // Grant DynamoDB and Secrets Manager access
     productsTable.grantReadWriteData(pollerLambda);
     dbSecret.grantRead(pollerLambda);
+    lwaAppIdSecret.grantRead(pollerLambda);
+    lwaClientSecret.grantRead(pollerLambda);
+    refreshTokenSecret.grantRead(pollerLambda);
 
     // Schedule hourly execution
     const hourlyRule = new events.Rule(this, 'HourlyPollerTrigger', {

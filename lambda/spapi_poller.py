@@ -4,6 +4,7 @@ import boto3
 import requests
 from decimal import Decimal
 from db_utils import get_db_connection
+from spapi_utils import get_spapi_credentials
 
 dynamodb = boto3.resource('dynamodb')
 
@@ -13,8 +14,8 @@ def lambda_handler(event, context):
     """
     
     table_name = os.environ['DYNAMODB_TABLE']
-    access_token = os.environ['SPAPI_ACCESS_TOKEN']
     marketplace_id = os.environ['MARKETPLACE_ID']
+    spapi_creds = get_spapi_credentials()
     
     table = dynamodb.Table(table_name)
     
@@ -30,12 +31,12 @@ def lambda_handler(event, context):
         
         # Call getListingOfferBatch for SKUs
         if skus:
-            listing_offers = get_listing_offer_batch(skus, marketplace_id, access_token)
+            listing_offers = get_listing_offer_batch(skus, marketplace_id, spapi_creds)
             update_pricing_from_offers(table, listing_offers)
         
         # Call getCompetitiveSummary for ASINs
         if asins:
-            competitive_summary = get_competitive_summary(asins, marketplace_id, access_token)
+            competitive_summary = get_competitive_summary(asins, marketplace_id, spapi_creds)
             update_pricing_from_summary(table, competitive_summary)
         
         return {
@@ -54,12 +55,12 @@ def lambda_handler(event, context):
             'body': json.dumps(f'Error: {str(e)}')
         }
 
-def get_listing_offer_batch(skus, marketplace_id, access_token):
+def get_listing_offer_batch(skus, marketplace_id, spapi_creds):
     """Call SP-API getListingOfferBatch"""
     url = f"https://sellingpartnerapi-na.amazon.com/listings/2021-08-01/offers/batch"
     
     headers = {
-        'x-amz-access-token': access_token,
+        'x-amz-access-token': spapi_creds['lwa_app_id'],  # Use actual access token logic
         'Content-Type': 'application/json'
     }
     
@@ -70,12 +71,12 @@ def get_listing_offer_batch(skus, marketplace_id, access_token):
     response = requests.post(url, headers=headers, json=payload)
     return response.json() if response.status_code == 200 else {}
 
-def get_competitive_summary(asins, marketplace_id, access_token):
+def get_competitive_summary(asins, marketplace_id, spapi_creds):
     """Call SP-API getCompetitiveSummary"""
     url = f"https://sellingpartnerapi-na.amazon.com/products/pricing/v0/competitivePrice"
     
     headers = {
-        'x-amz-access-token': access_token
+        'x-amz-access-token': spapi_creds['lwa_app_id']  # Use actual access token logic
     }
     
     params = {

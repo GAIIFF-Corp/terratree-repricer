@@ -6,6 +6,7 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import * as events from 'aws-cdk-lib/aws-events';
 import * as targets from 'aws-cdk-lib/aws-events-targets';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
+import * as s3deploy from 'aws-cdk-lib/aws-s3-deployment';
 import { PriceUpdateLambdaStack } from './price-update-lambda-stack';
 import { SpapiPollerStack } from './spapi-poller-stack';
 
@@ -27,8 +28,24 @@ export class TerratreeRepricerStack extends Stack {
       ],
     });
     
+    // Grant S3 access to Glue role
+    scriptBucket.grantReadWrite(glueRole);
+    
     // Grant Secrets Manager access to Glue role
     dbSecret.grantRead(glueRole);
+    
+    // Grant DynamoDB access to Glue role
+    glueRole.addToPolicy(new iam.PolicyStatement({
+      actions: ['dynamodb:*'],
+      resources: [`arn:aws:dynamodb:${this.region}:${this.account}:table/terratree-products`]
+    }));
+    
+    // Deploy ETL script to S3
+    new s3deploy.BucketDeployment(this, 'DeployETLScript', {
+      sources: [s3deploy.Source.asset('etl')],
+      destinationBucket: scriptBucket,
+      destinationKeyPrefix: 'etl/'
+    });
 
     // Glue job
     const glueJob = new glue.CfnJob(this, 'TerratreeGlueJob', {

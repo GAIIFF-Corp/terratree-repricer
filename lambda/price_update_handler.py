@@ -55,8 +55,22 @@ def lambda_handler(event, context):
                 'body': json.dumps('No valid pricing found')
             }
         
+        # Get existing item to check min/max prices
+        existing_item = table.get_item(
+            Key={'asin': asin, 'marketplace_id': marketplace_id}
+        ).get('Item', {})
+        
+        min_price = float(existing_item.get('min_price', 0))
+        max_price = float(existing_item.get('max_price', float('inf')))
+        
         # Calculate new price with markup
         new_price = lowest_price * (1 + markup_percentage / 100)
+        
+        # Apply min/max constraints
+        if new_price < min_price:
+            new_price = min_price
+        elif new_price > max_price:
+            new_price = max_price
         
         # Update both DynamoDB and database
         response = table.update_item(
@@ -76,7 +90,7 @@ def lambda_handler(event, context):
         with get_db_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "UPDATE products SET updated_price = %s, last_updated = NOW() WHERE asin = %s AND marketplace_id = %s",
+                    "UPDATE products SET updated_price = %s, last_updated = NOW() WHERE asin = %s AND marketplace_id = %s AND updated_price BETWEEN min_price AND max_price",
                     (round(new_price, 2), asin, marketplace_id)
                 )
                 conn.commit()

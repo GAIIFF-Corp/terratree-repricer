@@ -62,7 +62,8 @@ export class TerratreeRepricerStack extends Stack {
         '--job-language': 'python',
         '--extra-py-files': '',
         '--DB_SECRET_ARN': dbSecret.secretArn,
-        '--DYNAMODB_TABLE': 'terratree-products'
+        '--DYNAMODB_TABLE': 'terratree-products',
+        '--etl-enable-container-telemetry': 'true'
       },
       glueVersion: '4.0',
       maxRetries: 0,

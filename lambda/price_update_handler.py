@@ -2,6 +2,7 @@ import json
 import os
 import boto3
 from decimal import Decimal
+from db_utils import get_db_connection
 
 dynamodb = boto3.resource('dynamodb')
 
@@ -57,7 +58,7 @@ def lambda_handler(event, context):
         # Calculate new price with markup
         new_price = lowest_price * (1 + markup_percentage / 100)
         
-        # Update DynamoDB
+        # Update both DynamoDB and database
         response = table.update_item(
             Key={
                 'asin': asin,
@@ -70,6 +71,15 @@ def lambda_handler(event, context):
             },
             ReturnValues='UPDATED_NEW'
         )
+        
+        # Update database
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE products SET updated_price = %s, last_updated = NOW() WHERE asin = %s AND marketplace_id = %s",
+                    (round(new_price, 2), asin, marketplace_id)
+                )
+                conn.commit()
         
         return {
             'statusCode': 200,

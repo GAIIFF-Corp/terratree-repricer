@@ -3,6 +3,7 @@ import os
 import boto3
 import requests
 from decimal import Decimal
+from db_utils import get_db_connection
 
 dynamodb = boto3.resource('dynamodb')
 
@@ -18,12 +19,14 @@ def lambda_handler(event, context):
     table = dynamodb.Table(table_name)
     
     try:
-        # Get all SKUs and ASINs from DynamoDB
-        response = table.scan()
-        items = response['Items']
-        
-        skus = [item.get('sku') for item in items if item.get('sku')]
-        asins = [item['asin'] for item in items]
+        # Get all SKUs and ASINs from database
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT sku, asin FROM products WHERE active = true")
+                products = cur.fetchall()
+                
+        skus = [p[0] for p in products if p[0]]
+        asins = [p[1] for p in products]
         
         # Call getListingOfferBatch for SKUs
         if skus:

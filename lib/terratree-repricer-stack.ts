@@ -5,12 +5,16 @@ import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as events from 'aws-cdk-lib/aws-events';
 import * as targets from 'aws-cdk-lib/aws-events-targets';
+import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import { PriceUpdateLambdaStack } from './price-update-lambda-stack';
 import { SpapiPollerStack } from './spapi-poller-stack';
 
 export class TerratreeRepricerStack extends Stack {
   constructor(scope: Construct, id: string, props?: StackProps) {
     super(scope, id, props);
+
+    // Reference database secrets
+    const dbSecret = secretsmanager.Secret.fromSecretNameV2(this, 'DatabaseSecret', 'terratree/production_db');
 
     // S3 bucket for Glue script
     const scriptBucket = new s3.Bucket(this, 'GlueScriptBucket');
@@ -22,6 +26,9 @@ export class TerratreeRepricerStack extends Stack {
         iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AWSGlueServiceRole'),
       ],
     });
+    
+    // Grant Secrets Manager access to Glue role
+    dbSecret.grantRead(glueRole);
 
     // Glue job
     const glueJob = new glue.CfnJob(this, 'TerratreeGlueJob', {
@@ -36,6 +43,8 @@ export class TerratreeRepricerStack extends Stack {
         '--TempDir': `s3://${scriptBucket.bucketName}/temp/`,
         '--job-language': 'python',
         '--extra-py-files': '',
+        '--DB_SECRET_ARN': dbSecret.secretArn,
+        '--DYNAMODB_TABLE': 'terratree-products'
       },
       glueVersion: '4.0',
       maxRetries: 0,

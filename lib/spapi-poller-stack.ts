@@ -4,12 +4,14 @@ import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as events from 'aws-cdk-lib/aws-events';
 import * as targets from 'aws-cdk-lib/aws-events-targets';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
+import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 
 export class SpapiPollerStack extends Stack {
   constructor(scope: Construct, id: string, props?: StackProps) {
     super(scope, id, props);
 
-    // Reference existing DynamoDB table
+    // Reference database secrets and DynamoDB table
+    const dbSecret = secretsmanager.Secret.fromSecretNameV2(this, 'DatabaseSecret', 'terratree/production_db');
     const productsTable = dynamodb.Table.fromTableName(this, 'ProductsTable', 'terratree-products');
 
     // SP-API Poller Lambda
@@ -20,14 +22,16 @@ export class SpapiPollerStack extends Stack {
       environment: {
         DYNAMODB_TABLE: 'terratree-products',
         SPAPI_ACCESS_TOKEN: 'REPLACE_WITH_TOKEN',
-        MARKETPLACE_ID: 'ATVPDKIKX0DER'
+        MARKETPLACE_ID: 'ATVPDKIKX0DER',
+        DB_SECRET_ARN: dbSecret.secretArn
       },
       timeout: Duration.minutes(5),
       memorySize: 512
     });
 
-    // Grant DynamoDB access
+    // Grant DynamoDB and Secrets Manager access
     productsTable.grantReadWriteData(pollerLambda);
+    dbSecret.grantRead(pollerLambda);
 
     // Schedule hourly execution
     const hourlyRule = new events.Rule(this, 'HourlyPollerTrigger', {

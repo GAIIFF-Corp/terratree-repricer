@@ -5,10 +5,14 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import * as events from 'aws-cdk-lib/aws-events';
 import * as targets from 'aws-cdk-lib/aws-events-targets';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
+import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 
 export class PriceUpdateLambdaStack extends Stack {
   constructor(scope: Construct, id: string, props?: StackProps) {
     super(scope, id, props);
+
+    // Reference database secrets
+    const dbSecret = secretsmanager.Secret.fromSecretNameV2(this, 'DatabaseSecret', 'terratree/production_db');
 
     // Create DynamoDB table
     const productsTable = new dynamodb.Table(this, 'ProductsTable', {
@@ -27,14 +31,16 @@ export class PriceUpdateLambdaStack extends Stack {
         SPAPI_ACCESS_TOKEN: 'REPLACE_WITH_TOKEN', // Use Secrets Manager in production
         MARKUP_PERCENTAGE: '15',
         SELLER_ID: 'REPLACE_WITH_SELLER_ID',
-        MARKETPLACE_ID: 'ATVPDKIKX0DER'
+        MARKETPLACE_ID: 'ATVPDKIKX0DER',
+        DB_SECRET_ARN: dbSecret.secretArn
       },
       timeout: Duration.seconds(30),
       memorySize: 256
     });
 
-    // Grant DynamoDB access
+    // Grant DynamoDB and Secrets Manager access
     productsTable.grantWriteData(priceLambda);
+    dbSecret.grantRead(priceLambda);
 
     // Allow Lambda to be triggered by EventBridge
     const eventRule = new events.Rule(this, 'PriceChangeEventRule', {

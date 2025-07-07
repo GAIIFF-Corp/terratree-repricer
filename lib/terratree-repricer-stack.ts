@@ -16,8 +16,8 @@ export class TerratreeRepricerStack extends Stack {
     // Reference database secrets
     const dbSecret = secretsmanager.Secret.fromSecretNameV2(this, 'DatabaseSecret', 'terratree/production_db');
 
-    // S3 bucket for Glue script
-    const scriptBucket = new s3.Bucket(this, 'GlueScriptBucket');
+    // Reference existing S3 bucket for Glue script
+    const scriptBucket = s3.Bucket.fromBucketName(this, 'GlueScriptBucket', 'terratreepricing');
 
     // IAM role for Glue
     const glueRole = new iam.Role(this, 'GlueJobRole', {
@@ -36,7 +36,7 @@ export class TerratreeRepricerStack extends Stack {
       role: glueRole.roleArn,
       command: {
         name: 'glueetl',
-        scriptLocation: `s3://${scriptBucket.bucketName}/etl/etl.py`,
+        scriptLocation: 's3://terratreepricing/etl/etl.py',
         pythonVersion: '3',
       },
       defaultArguments: {

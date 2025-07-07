@@ -6,6 +6,7 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import * as events from 'aws-cdk-lib/aws-events';
 import * as targets from 'aws-cdk-lib/aws-events-targets';
 import { PriceUpdateLambdaStack } from './price-update-lambda-stack';
+import { SpapiPollerStack } from './spapi-poller-stack';
 
 export class TerratreeRepricerStack extends Stack {
   constructor(scope: Construct, id: string, props?: StackProps) {
@@ -62,6 +63,9 @@ export class TerratreeRepricerStack extends Stack {
 
     // Add the Price Update Lambda Stack
     new PriceUpdateLambdaStack(this, 'PriceUpdateLambda');
+    
+    // Add the SP-API Poller Lambda Stack
+    new SpapiPollerStack(this, 'SpapiPoller');
   }
 }
 

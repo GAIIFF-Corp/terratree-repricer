@@ -10,6 +10,7 @@ import * as s3deploy from 'aws-cdk-lib/aws-s3-deployment';
 import { PriceUpdateLambdaStack } from './price-update-lambda-stack';
 import { SpapiPollerStack } from './spapi-poller-stack';
 
+
 export class TerratreeRepricerStack extends Stack {
   constructor(scope: Construct, id: string, props?: StackProps) {
     super(scope, id, props);
@@ -92,6 +93,7 @@ export class TerratreeRepricerStack extends Stack {
     
     // Add the SP-API Poller Lambda Stack
     new SpapiPollerStack(this, 'SpapiPoller');
+
   }
 }
 

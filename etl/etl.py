@@ -51,15 +51,28 @@ def lambda_handler(event=None, context=None):
             cursor.execute(query)
             rows = cursor.fetchall()
 
-            for row in rows:
-                item = {
-                    'asin': row['asin'],
-                    'retail_price': Decimal(str(row['retail_price'])) if row['retail_price'] is not None else Decimal('0.0'),
-                    'min_price': Decimal(str(row['min_price'])) if row['min_price'] is not None else Decimal('0.0'),
-                    'max_price': Decimal(str(row['max_price'])) if row['max_price'] is not None else Decimal('0.0'),
-                    'currentPrice': Decimal(str(row['currentPrice'])) if row['currentPrice'] is not None else Decimal('0.0'),
-                }
-                table.put_item(Item=item)
+            # Process in batches of 25 (DynamoDB batch limit)
+            batch_size = 25
+            for i in range(0, len(rows), batch_size):
+                batch = rows[i:i + batch_size]
+                
+                with table.batch_writer() as batch_writer:
+                    for row in batch:
+                        try:
+                            item = {
+                                'asin': str(row['asin']),
+                                'marketplace_id': 'ATVPDKIKX0DER',
+                                'retail_price': Decimal(str(row['retail_price'])) if row['retail_price'] is not None else Decimal('0.0'),
+                                'min_price': Decimal(str(row['min_price'])) if row['min_price'] is not None else Decimal('0.0'),
+                                'max_price': Decimal(str(row['max_price'])) if row['max_price'] is not None else Decimal('0.0'),
+                                'business_price': Decimal(str(row['business_price'])) if row['business_price'] is not None else Decimal('0.0'),
+                                'currentPrice': Decimal(str(row['currentPrice'])) if row['currentPrice'] is not None else Decimal('0.0'),
+                            }
+                            batch_writer.put_item(Item=item)
+                        except Exception as e:
+                            print(f"Error writing item {row['asin']}: {e}")
+                
+                print(f"Processed batch {i//batch_size + 1}/{(len(rows) + batch_size - 1)//batch_size}")
 
             print(f"Successfully synced {len(rows)} items to DynamoDB.")
     except Exception as e:

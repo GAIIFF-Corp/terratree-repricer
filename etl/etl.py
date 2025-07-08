@@ -36,14 +36,17 @@ def lambda_handler(event=None, context=None):
     try:
         with connection.cursor() as cursor:
             query = """
-                SELECT t.product_id AS asin,
-                       t.retail_price,
-                       z.min_price,
-                       z.max_price,
-                       z.sales_price AS currentPrice
+                SELECT 
+                    t.product_id AS asin,
+                    t.retail_price,
+                    z.min_price,
+                    z.max_price,
+                    z.business_price,
+                    z.sales_price AS currentPrice
                 FROM TerratreeProductsUSA t
-                JOIN ZoroFeedNew z ON t.product_id = z.sku
-                WHERE t.product_id IS NOT NULL AND z.sku IS NOT NULL
+                LEFT JOIN ZoroFeedNew z 
+                    ON TRIM(LOWER(t.seller_sku)) = TRIM(LOWER(z.sku))
+                WHERE t.product_id IS NOT NULL;
             """
             cursor.execute(query)
             rows = cursor.fetchall()

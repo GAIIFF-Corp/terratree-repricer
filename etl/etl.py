@@ -5,9 +5,20 @@ import boto3
 import pymysql
 from decimal import Decimal
 from awsglue.utils import getResolvedOptions
+from pyspark.context import SparkContext
+from awsglue.context import GlueContext
+from awsglue.job import Job
 
 # Get Glue job arguments
-args = getResolvedOptions(sys.argv, ['DB_SECRET_ARN', 'DYNAMODB_TABLE'])
+args = getResolvedOptions(sys.argv, ['JOB_NAME', 'DB_SECRET_ARN', 'DYNAMODB_TABLE'])
+
+# Initialize Spark and Glue contexts
+sc = SparkContext()
+glueContext = GlueContext(sc)
+spark = glueContext.spark_session
+job = Job(glueContext)
+job.init(args['JOB_NAME'], args)
+
 DYNAMODB_TABLE = args['DYNAMODB_TABLE']
 DB_SECRET_ARN = args['DB_SECRET_ARN']
 
@@ -17,23 +28,24 @@ def get_db_secrets():
     response = client.get_secret_value(SecretId=DB_SECRET_ARN)
     return json.loads(response['SecretString'])
 
-# Get database credentials from Secrets Manager
-secrets = get_db_secrets()
-
-# Connect to RDS
-connection = pymysql.connect(
-    host=secrets['host'],
-    user=secrets['username'],
-    password=secrets['password'],
-    database=secrets.get('database', 'terratree-production'),
-    cursorclass=pymysql.cursors.DictCursor
-)
-
-dynamodb = boto3.resource('dynamodb')
-table = dynamodb.Table(DYNAMODB_TABLE)
-
-def lambda_handler(event=None, context=None):
+def main():
     try:
+        # Get database credentials from Secrets Manager
+        secrets = get_db_secrets()
+        
+        # Connect to RDS
+        connection = pymysql.connect(
+            host=secrets['host'],
+            user=secrets['username'],
+            password=secrets['password'],
+            database=secrets.get('database', 'terratree-production'),
+            cursorclass=pymysql.cursors.DictCursor
+        )
+        
+        # Initialize DynamoDB
+        dynamodb = boto3.resource('dynamodb')
+        table = dynamodb.Table(DYNAMODB_TABLE)
+        
         with connection.cursor() as cursor:
             query = """
                 SELECT 
@@ -75,10 +87,15 @@ def lambda_handler(event=None, context=None):
                 print(f"Processed batch {i//batch_size + 1}/{(len(rows) + batch_size - 1)//batch_size}")
 
             print(f"Successfully synced {len(rows)} items to DynamoDB.")
+            
     except Exception as e:
         print(f"Error during ETL: {e}")
+        raise e
     finally:
-        connection.close()
+        if 'connection' in locals():
+            connection.close()
 
 if __name__ == "__main__":
-    lambda_handler()
+    main()
+
+job.commit()

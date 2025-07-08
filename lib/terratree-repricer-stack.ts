@@ -45,7 +45,9 @@ export class TerratreeRepricerStack extends Stack {
     new s3deploy.BucketDeployment(this, 'DeployETLScript', {
       sources: [s3deploy.Source.asset('etl')],
       destinationBucket: scriptBucket,
-      destinationKeyPrefix: 'etl/'
+      destinationKeyPrefix: 'etl/',
+      prune: false,
+      retainOnDelete: false
     });
 
     // Glue job
@@ -60,6 +62,7 @@ export class TerratreeRepricerStack extends Stack {
       defaultArguments: {
         '--TempDir': 's3://terratreerepricerstack-gluescriptbucket705d6cca-zolk54rusf8m/temp/',
         '--job-language': 'python',
+        '--JOB_NAME': 'terratree-etl-job',
         '--DB_SECRET_ARN': dbSecret.secretArn,
         '--DYNAMODB_TABLE': 'terratree-products',
         '--etl-enable-container-telemetry': 'true'

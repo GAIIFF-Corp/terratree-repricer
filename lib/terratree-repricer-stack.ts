@@ -54,11 +54,11 @@ export class TerratreeRepricerStack extends Stack {
       role: glueRole.roleArn,
       command: {
         name: 'glueetl',
-        scriptLocation: `s3://${scriptBucket.bucketName}/etl/etl.py`,
+        scriptLocation: 's3://terratreerepricerstack-gluescriptbucket705d6cca-zolk54rusf8m/etl/etl.py',
         pythonVersion: '3',
       },
       defaultArguments: {
-        '--TempDir': `s3://${scriptBucket.bucketName}/temp/`,
+        '--TempDir': 's3://terratreerepricerstack-gluescriptbucket705d6cca-zolk54rusf8m/temp/',
         '--job-language': 'python',
         '--DB_SECRET_ARN': dbSecret.secretArn,
         '--DYNAMODB_TABLE': 'terratree-products',

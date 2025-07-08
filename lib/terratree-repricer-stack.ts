@@ -60,7 +60,6 @@ export class TerratreeRepricerStack extends Stack {
       defaultArguments: {
         '--TempDir': `s3://${scriptBucket.bucketName}/temp/`,
         '--job-language': 'python',
-        '--extra-py-files': '',
         '--DB_SECRET_ARN': dbSecret.secretArn,
         '--DYNAMODB_TABLE': 'terratree-products',
         '--etl-enable-container-telemetry': 'true'

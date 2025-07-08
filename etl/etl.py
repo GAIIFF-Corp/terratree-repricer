@@ -1,11 +1,15 @@
+import sys
 import os
 import json
 import boto3
 import pymysql
 from decimal import Decimal
+from awsglue.utils import getResolvedOptions
 
-DYNAMODB_TABLE = os.environ.get('DYNAMODB_TABLE', 'terratree-products')
-DB_SECRET_ARN = os.environ['DB_SECRET_ARN']
+# Get Glue job arguments
+args = getResolvedOptions(sys.argv, ['DB_SECRET_ARN', 'DYNAMODB_TABLE'])
+DYNAMODB_TABLE = args['DYNAMODB_TABLE']
+DB_SECRET_ARN = args['DB_SECRET_ARN']
 
 def get_db_secrets():
     """Retrieve database secrets from AWS Secrets Manager"""

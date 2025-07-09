@@ -1,101 +1,125 @@
 import sys
-import os
 import json
 import boto3
 import pymysql
+import logging
 from decimal import Decimal
 from awsglue.utils import getResolvedOptions
-from pyspark.context import SparkContext
-from awsglue.context import GlueContext
-from awsglue.job import Job
 
-# Get Glue job arguments
-args = getResolvedOptions(sys.argv, ['JOB_NAME', 'DB_SECRET_ARN', 'DYNAMODB_TABLE'])
 
-# Initialize Spark and Glue contexts
-sc = SparkContext()
-glueContext = GlueContext(sc)
-spark = glueContext.spark_session
-job = Job(glueContext)
-job.init(args['JOB_NAME'], args)
+# Configure logging
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+handler = logging.StreamHandler(sys.stdout)
+formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+handler.setFormatter(formatter)
+logger.addHandler(handler)
 
-DYNAMODB_TABLE = args['DYNAMODB_TABLE']
-DB_SECRET_ARN = args['DB_SECRET_ARN']
 
-def get_db_secrets():
-    """Retrieve database secrets from AWS Secrets Manager"""
-    client = boto3.client('secretsmanager')
-    response = client.get_secret_value(SecretId=DB_SECRET_ARN)
-    return json.loads(response['SecretString'])
+def get_db_connection(credentials):
+    """Establish MySQL connection with timeout handling"""
+    try:
+        conn = pymysql.connect(
+            host=credentials["host"],
+            user=credentials["username"],
+            password=credentials["password"],
+            database=credentials.get("dbname", "terratree-production"),
+            connect_timeout=5,
+            read_timeout=30,
+            cursorclass=pymysql.cursors.SSDictCursor,
+        )
+        logger.info("Successfully connected to MySQL database")
+        return conn
+    except pymysql.Error as e:
+        logger.error(f"MySQL connection failed: {e}")
+        raise
+
 
 def main():
-    try:
-        # Get database credentials from Secrets Manager
-        secrets = get_db_secrets()
-        
-        # Connect to RDS
-        connection = pymysql.connect(
-            host=secrets['host'],
-            user=secrets['username'],
-            password=secrets['password'],
-            database=secrets.get('database', 'terratree-production'),
-            cursorclass=pymysql.cursors.DictCursor
-        )
-        
-        # Initialize DynamoDB
-        dynamodb = boto3.resource('dynamodb')
-        table = dynamodb.Table(DYNAMODB_TABLE)
-        
-        with connection.cursor() as cursor:
-            query = """
-                SELECT 
-                    t.product_id AS asin,
-                    t.retail_price,
-                    z.min_price,
-                    z.max_price,
-                    z.business_price,
-                    z.sales_price AS currentPrice
-                FROM TerratreeProductsUSA t
-                LEFT JOIN ZoroFeedNew z 
-                    ON TRIM(LOWER(t.seller_sku)) = TRIM(LOWER(z.sku))
-                WHERE t.product_id IS NOT NULL;
-            """
-            cursor.execute(query)
-            rows = cursor.fetchall()
+    args = getResolvedOptions(sys.argv, ["DB_SECRET_ARN", "DYNAMODB_TABLE"])
+    db_secret_arn = args["DB_SECRET_ARN"]
+    dynamodb_table = args["DYNAMODB_TABLE"]
 
-            # Process in batches of 25 (DynamoDB batch limit)
-            batch_size = 25
-            for i in range(0, len(rows), batch_size):
-                batch = rows[i:i + batch_size]
-                
-                with table.batch_writer() as batch_writer:
-                    for row in batch:
+    logger.info("Starting ETL job")
+    logger.info(f"Python version: {sys.version}")
+    logger.info(f"PyMySQL version: {pymysql.__version__}")
+    logger.info(f"Boto3 version: {boto3.__version__}")
+
+    try:
+        # Initialize AWS clients
+        secrets_client = boto3.client("secretsmanager")
+        dynamodb = boto3.resource("dynamodb")
+        table = dynamodb.Table(dynamodb_table)
+
+        # Fetch database credentials
+        secret = secrets_client.get_secret_value(SecretId=db_secret_arn)
+        credentials = json.loads(secret["SecretString"])
+        logger.info("Retrieved database credentials from Secrets Manager")
+
+        # Connect to MySQL
+        conn = get_db_connection(credentials)
+
+        # Batch processing parameters
+        batch_size = 25
+        total_processed = 0
+
+        with conn.cursor() as cursor:
+            query = """
+            SELECT
+                t.product_id AS asin,
+                COALESCE(t.retail_price, 0.0) AS retail_price,
+                COALESCE(z.min_price, 0.0) AS min_price,
+                COALESCE(z.max_price, 0.0) AS max_price,
+                COALESCE(z.business_price, 0.0) AS business_price,
+                COALESCE(z.sales_price, 0.0) AS currentPrice
+            FROM TerratreeProductsUSA t
+            LEFT JOIN ZoroFeedNew z
+                ON LOWER(TRIM(t.seller_sku)) = LOWER(TRIM(z.sku))
+            WHERE t.product_id IS NOT NULL
+            """
+            logger.info(f"Executing query: {query}")
+            cursor.execute(query)
+            logger.info("Query executed successfully")
+
+            while True:
+                # Fetch rows in batches
+                rows = cursor.fetchmany(batch_size)
+                if not rows:
+                    logger.info("No more rows to process")
+                    break
+
+                # Prepare DynamoDB batch
+                with table.batch_writer() as batch:
+                    for row in rows:
                         try:
                             item = {
-                                'asin': str(row['asin']),
-                                'marketplace_id': 'ATVPDKIKX0DER',
-                                'retail_price': Decimal(str(row['retail_price'])) if row['retail_price'] is not None else Decimal('0.0'),
-                                'min_price': Decimal(str(row['min_price'])) if row['min_price'] is not None else Decimal('0.0'),
-                                'max_price': Decimal(str(row['max_price'])) if row['max_price'] is not None else Decimal('0.0'),
-                                'business_price': Decimal(str(row['business_price'])) if row['business_price'] is not None else Decimal('0.0'),
-                                'currentPrice': Decimal(str(row['currentPrice'])) if row['currentPrice'] is not None else Decimal('0.0'),
+                                "asin": str(row["asin"]),
+                                "marketplace_id": "ATVPDKIKX0DER",
+                                "retail_price": Decimal(str(row["retail_price"])),
+                                "min_price": Decimal(str(row["min_price"])),
+                                "max_price": Decimal(str(row["max_price"])),
+                                "business_price": Decimal(str(row["business_price"])),
+                                "currentPrice": Decimal(str(row["currentPrice"])),
                             }
-                            batch_writer.put_item(Item=item)
+                            batch.put_item(Item=item)
+                            total_processed += 1
                         except Exception as e:
-                            print(f"Error writing item {row['asin']}: {e}")
-                
-                print(f"Processed batch {i//batch_size + 1}/{(len(rows) + batch_size - 1)//batch_size}")
+                            logger.error(f"Error processing row: {row} - {str(e)}")
 
-            print(f"Successfully synced {len(rows)} items to DynamoDB.")
-            
+                logger.info(
+                    f"Processed batch of {len(rows)} items. Total: {total_processed}"
+                )
+
+        logger.info(f"Successfully processed {total_processed} records")
+
     except Exception as e:
-        print(f"Error during ETL: {e}")
-        raise e
+        logger.exception(f"Job failed with error: {str(e)}")
     finally:
-        if 'connection' in locals():
-            connection.close()
+        if "conn" in locals() and conn.open:
+            conn.close()
+            logger.info("MySQL connection closed")
+        logger.info("ETL job completed")
+
 
 if __name__ == "__main__":
     main()
-
-job.commit()

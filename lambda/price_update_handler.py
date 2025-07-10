@@ -1,9 +1,8 @@
 import json
 import os
 import boto3
-import requests
+import urllib3
 from decimal import Decimal
-from db_utils import get_db_connection
 
 dynamodb = boto3.resource('dynamodb')
 
@@ -19,21 +18,25 @@ def lambda_handler(event, context):
     table = dynamodb.Table(table_name)
     
     try:
-        # Parse the EventBridge event
-        detail = event.get('detail', {})
+        # Parse SP-API notification
+        payload = event.get('Payload', {})
+        notification = payload.get('AnyOfferChangedNotification', {})
         
-        # Extract product information from the event
-        asin = detail.get('asin')
-        marketplace_id = detail.get('marketplaceId')
+        # Extract ASIN and marketplace from OfferChangeTrigger
+        trigger = notification.get('OfferChangeTrigger', {})
+        asin = trigger.get('ASIN')
+        marketplace_id = trigger.get('MarketplaceId')
         
         if not asin or not marketplace_id:
             return {
                 'statusCode': 400,
-                'body': json.dumps('Missing required fields: asin or marketplaceId')
+                'body': json.dumps('Missing ASIN or MarketplaceId')
             }
         
-        # Get current offer information
-        offers = detail.get('offers', [])
+        # Get offers and summary data
+        offers = notification.get('Offers', [])
+        summary = notification.get('Summary', {})
+        lowest_prices = summary.get('LowestPrices', [])
         
         if not offers:
             return {
@@ -41,14 +44,14 @@ def lambda_handler(event, context):
                 'body': json.dumps('No offers found in event')
             }
         
-        # Find the lowest price among offers
+        # Find lowest competitor price from LowestPrices
         lowest_price = None
-        for offer in offers:
-            price_info = offer.get('listingPrice', {})
-            amount = price_info.get('amount')
-            
-            if amount and (lowest_price is None or amount < lowest_price):
-                lowest_price = amount
+        for price_info in lowest_prices:
+            if price_info.get('Condition') == 'new':
+                listing_price = price_info.get('ListingPrice', {})
+                amount = listing_price.get('Amount')
+                if amount and (lowest_price is None or amount < lowest_price):
+                    lowest_price = amount
         
         if lowest_price is None:
             return {
@@ -62,6 +65,18 @@ def lambda_handler(event, context):
         ).get('Item', {})
         
         min_price = float(existing_item.get('min_price', 0))
+        
+        # Only reprice if offer price is above our minimum price
+        if lowest_price <= min_price:
+            return {
+                'statusCode': 200,
+                'body': json.dumps({
+                    'message': 'No repricing needed - offer price at or below minimum',
+                    'offer_price': lowest_price,
+                    'min_price': min_price
+                })
+            }
+        
         max_price = float(existing_item.get('max_price', float('inf')))
         
         # Calculate new price with markup
@@ -83,17 +98,31 @@ def lambda_handler(event, context):
         elif business_price > max_business_price:
             business_price = max_business_price
         
-        # Update both DynamoDB and database
+        # Store competitor offers
+        competitor_offers = []
+        for offer in offers:
+            listing_price = offer.get('ListingPrice', {})
+            if listing_price.get('Amount'):
+                competitor_offers.append({
+                    'seller_id': offer.get('SellerId'),
+                    'price': Decimal(str(listing_price['Amount'])),
+                    'currency': listing_price.get('CurrencyCode', 'USD'),
+                    'condition': offer.get('SubCondition'),
+                    'is_fba': offer.get('IsFulfilledByAmazon', False)
+                })
+        
+        # Update DynamoDB with new prices and competitor data
         response = table.update_item(
             Key={
                 'asin': asin,
                 'marketplace_id': marketplace_id
             },
-            UpdateExpression='SET updated_price = :price, business_price = :bprice, last_updated = :timestamp',
+            UpdateExpression='SET updated_price = :price, business_price = :bprice, last_updated = :timestamp, competitor_offers = :offers',
             ExpressionAttributeValues={
                 ':price': Decimal(str(round(new_price, 2))),
                 ':bprice': Decimal(str(round(business_price, 2))),
-                ':timestamp': context.aws_request_id
+                ':timestamp': context.aws_request_id,
+                ':offers': competitor_offers
             },
             ReturnValues='UPDATED_NEW'
         )
@@ -103,7 +132,10 @@ def lambda_handler(event, context):
         # Update SP-API prices
         sku = existing_item.get('sku')
         if sku:
+            print(f"Found SKU: {sku}, updating SP-API prices")
             update_spapi_prices(sku, new_price, business_price, marketplace_id)
+        else:
+            print("No SKU found in existing item, skipping SP-API update")
         
         return {
             'statusCode': 200,
@@ -112,8 +144,7 @@ def lambda_handler(event, context):
                 'asin': asin,
                 'old_price': lowest_price,
                 'new_price': round(new_price, 2),
-                'business_price': round(business_price, 2),
-                'updated_attributes': response.get('Attributes', {})
+                'business_price': round(business_price, 2)
             })
         }
         
@@ -174,12 +205,15 @@ def update_spapi_prices(sku, regular_price, business_price, marketplace_id):
     }
     
     try:
-        requests.patch(
-            f'https://sellingpartnerapi-na.amazon.com/listings/2021-08-01/items/{sku}',
+        print(f"Sending PATCH request for SKU: {sku}, Regular Price: {regular_price}, Business Price: {business_price}")
+        http = urllib3.PoolManager()
+        response = http.request(
+            'PATCH',
+            f'https://sellingpartnerapi-na.amazon.com/listings/2021-08-01/items/{sku}?marketplaceIds={marketplace_id}',
             headers=headers,
-            json=payload,
-            params={'marketplaceIds': marketplace_id}
+            body=json.dumps(payload)
         )
+        print(f"SP-API PATCH response status: {response.status}")
         
     except Exception as e:
         print(f"Error updating SP-API prices: {str(e)}")

@@ -43,7 +43,7 @@ export class PriceUpdateLambdaStack extends Stack {
     });
 
     // Grant DynamoDB and Secrets Manager access
-    productsTable.grantWriteData(priceLambda);
+    productsTable.grantReadWriteData(priceLambda);
     dbSecret.grantRead(priceLambda);
     lwaAppIdSecret.grantRead(priceLambda);
     lwaClientSecret.grantRead(priceLambda);

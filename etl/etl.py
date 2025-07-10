@@ -5,6 +5,12 @@ import pymysql
 import logging
 from decimal import Decimal
 from awsglue.utils import getResolvedOptions
+from pyspark.context import SparkContext
+from awsglue.context import GlueContext
+from awsglue.job import Job
+from awsglue.dynamicframe import DynamicFrame
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import lit
 
 
 # Configure logging
@@ -36,7 +42,15 @@ def get_db_connection(credentials):
 
 
 def main():
-    args = getResolvedOptions(sys.argv, ["DB_SECRET_ARN", "DYNAMODB_TABLE"])
+    args = getResolvedOptions(sys.argv, ["JOB_NAME", "DB_SECRET_ARN", "DYNAMODB_TABLE"])
+    
+    # Initialize Spark
+    sc = SparkContext()
+    glueContext = GlueContext(sc)
+    spark = glueContext.spark_session
+    job = Job(glueContext)
+    job.init(args['JOB_NAME'], args)
+    
     db_secret_arn = args["DB_SECRET_ARN"]
     dynamodb_table = args["DYNAMODB_TABLE"]
 
@@ -56,68 +70,54 @@ def main():
         credentials = json.loads(secret["SecretString"])
         logger.info("Retrieved database credentials from Secrets Manager")
 
-        # Connect to MySQL
-        conn = get_db_connection(credentials)
+        # Read data using Spark JDBC
+        df = spark.read \
+            .format("jdbc") \
+            .option("url", f"jdbc:mysql://{credentials['host']}:3306/{credentials.get('dbname', 'terratree-production')}") \
+            .option("user", credentials["username"]) \
+            .option("password", credentials["password"]) \
+            .option("query", """
+                SELECT
+                    t.product_id AS asin,
+                    COALESCE(t.retail_price, 0.0) AS retail_price,
+                    COALESCE(z.min_price, 0.0) AS min_price,
+                    COALESCE(z.max_price, 0.0) AS max_price,
+                    COALESCE(z.business_price, 0.0) AS business_price,
+                    COALESCE(z.sales_price, 0.0) AS currentPrice
+                FROM TerratreeProductsUSA t
+                LEFT JOIN ZoroFeedNew z
+                    ON LOWER(TRIM(t.seller_sku)) = LOWER(TRIM(z.sku))
+                WHERE t.product_id IS NOT NULL
+            """) \
+            .load()
+        
+        # Add marketplace_id column
+        df = df.withColumn("marketplace_id", lit("ATVPDKIKX0DER"))
+        
+        logger.info(f"Loaded {df.count()} records from database")
+        
+        # Convert to DynamicFrame and write to DynamoDB
+        dynf = DynamicFrame.fromDF(df, glueContext, "dframe")
+        
+        glueContext.write_dynamic_frame.from_options(
+            frame=dynf,
+            connection_type="dynamodb",
+            connection_options={
+                "dynamodb.output.tableName": dynamodb_table,
+                "dynamodb.throughput.write.percent": "1.0"
+            }
+        )
+        
+        logger.info("Successfully wrote all records to DynamoDB using Glue DynamicFrame")
 
-        # Batch processing parameters
-        batch_size = 25
-        total_processed = 0
-
-        with conn.cursor() as cursor:
-            query = """
-            SELECT
-                t.product_id AS asin,
-                COALESCE(t.retail_price, 0.0) AS retail_price,
-                COALESCE(z.min_price, 0.0) AS min_price,
-                COALESCE(z.max_price, 0.0) AS max_price,
-                COALESCE(z.business_price, 0.0) AS business_price,
-                COALESCE(z.sales_price, 0.0) AS currentPrice
-            FROM TerratreeProductsUSA t
-            LEFT JOIN ZoroFeedNew z
-                ON LOWER(TRIM(t.seller_sku)) = LOWER(TRIM(z.sku))
-            WHERE t.product_id IS NOT NULL
-            """
-            logger.info(f"Executing query: {query}")
-            cursor.execute(query)
-            logger.info("Query executed successfully")
-
-            while True:
-                # Fetch rows in batches
-                rows = cursor.fetchmany(batch_size)
-                if not rows:
-                    logger.info("No more rows to process")
-                    break
-
-                # Process individual items
-                for row in rows:
-                    try:
-                        item = {
-                            "asin": str(row["asin"]),
-                            "marketplace_id": "ATVPDKIKX0DER",
-                            "retail_price": Decimal(str(row["retail_price"])),
-                            "min_price": Decimal(str(row["min_price"])),
-                            "max_price": Decimal(str(row["max_price"])),
-                            "business_price": Decimal(str(row["business_price"])),
-                            "currentPrice": Decimal(str(row["currentPrice"])),
-                        }
-                        table.put_item(Item=item)
-                        total_processed += 1
-                    except Exception as e:
-                        logger.error(f"Error processing row: {row} - {str(e)}")
-
-                logger.info(
-                    f"Processed batch of {len(rows)} items. Total: {total_processed}"
-                )
-
-        logger.info(f"Successfully processed {total_processed} records")
+        job.commit()
 
     except Exception as e:
         logger.exception(f"Job failed with error: {str(e)}")
     finally:
-        if "conn" in locals() and conn.open:
-            conn.close()
-            logger.info("MySQL connection closed")
         logger.info("ETL job completed")
+        if 'sc' in locals():
+            sc.stop()
 
 
 if __name__ == "__main__":

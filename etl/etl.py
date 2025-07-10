@@ -88,23 +88,22 @@ def main():
                     logger.info("No more rows to process")
                     break
 
-                # Prepare DynamoDB batch
-                with table.batch_writer() as batch:
-                    for row in rows:
-                        try:
-                            item = {
-                                "asin": str(row["asin"]),
-                                "marketplace_id": "ATVPDKIKX0DER",
-                                "retail_price": Decimal(str(row["retail_price"])),
-                                "min_price": Decimal(str(row["min_price"])),
-                                "max_price": Decimal(str(row["max_price"])),
-                                "business_price": Decimal(str(row["business_price"])),
-                                "currentPrice": Decimal(str(row["currentPrice"])),
-                            }
-                            batch.put_item(Item=item)
-                            total_processed += 1
-                        except Exception as e:
-                            logger.error(f"Error processing row: {row} - {str(e)}")
+                # Process individual items
+                for row in rows:
+                    try:
+                        item = {
+                            "asin": str(row["asin"]),
+                            "marketplace_id": "ATVPDKIKX0DER",
+                            "retail_price": Decimal(str(row["retail_price"])),
+                            "min_price": Decimal(str(row["min_price"])),
+                            "max_price": Decimal(str(row["max_price"])),
+                            "business_price": Decimal(str(row["business_price"])),
+                            "currentPrice": Decimal(str(row["currentPrice"])),
+                        }
+                        table.put_item(Item=item)
+                        total_processed += 1
+                    except Exception as e:
+                        logger.error(f"Error processing row: {row} - {str(e)}")
 
                 logger.info(
                     f"Processed batch of {len(rows)} items. Total: {total_processed}"

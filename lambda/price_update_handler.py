@@ -44,16 +44,35 @@ def lambda_handler(event, context):
                 'body': json.dumps('No offers found in event')
             }
         
-        # Find lowest competitor price from LowestPrices
-        lowest_price = None
+        # Check if we are already the featured offer
+        our_seller_id = 'AERPN1UM8O1I4'
+        featured_offer_price = None
+        we_are_featured = False
+        
+        # Find the featured offer (lowest price)
         for price_info in lowest_prices:
             if price_info.get('Condition') == 'new':
                 listing_price = price_info.get('ListingPrice', {})
                 amount = listing_price.get('Amount')
-                if amount and (lowest_price is None or amount < lowest_price):
-                    lowest_price = amount
+                if amount:
+                    featured_offer_price = amount
+                    break
         
-        if lowest_price is None:
+        # Check if we are the featured seller
+        for offer in offers:
+            if offer.get('SellerId') == our_seller_id:
+                offer_price = offer.get('ListingPrice', {}).get('Amount')
+                if offer_price and offer_price == featured_offer_price:
+                    we_are_featured = True
+                    break
+        
+        if we_are_featured:
+            return {
+                'statusCode': 200,
+                'body': json.dumps('We are already the featured offer - no repricing needed')
+            }
+        
+        if featured_offer_price is None:
             return {
                 'statusCode': 200,
                 'body': json.dumps('No valid pricing found')
@@ -66,30 +85,29 @@ def lambda_handler(event, context):
         
         min_price = float(existing_item.get('min_price', 0))
         
-        # Only reprice if offer price is above our minimum price
-        if lowest_price <= min_price:
+        # Set new price to 1 cent below featured offer
+        new_price = featured_offer_price - 0.01
+        
+        # Only reprice if new price is above our minimum price
+        if new_price <= min_price:
             return {
                 'statusCode': 200,
                 'body': json.dumps({
-                    'message': 'No repricing needed - offer price at or below minimum',
-                    'offer_price': lowest_price,
+                    'message': 'No repricing needed - would be at or below minimum',
+                    'featured_price': featured_offer_price,
+                    'target_price': new_price,
                     'min_price': min_price
                 })
             }
         
         max_price = float(existing_item.get('max_price', float('inf')))
         
-        # Calculate new price with markup
-        new_price = lowest_price * (1 + markup_percentage / 100)
-        
-        # Apply min/max constraints
-        if new_price < min_price:
-            new_price = min_price
-        elif new_price > max_price:
+        # Apply max constraint
+        if new_price > max_price:
             new_price = max_price
         
-        # Calculate business price (1% lower than main price)
-        business_price = new_price * 0.99
+        # Calculate business price (1 cent below regular price)
+        business_price = new_price - 0.01
         min_business_price = float(existing_item.get('min_business_price', 0))
         max_business_price = float(existing_item.get('max_business_price', float('inf')))
         
@@ -142,7 +160,7 @@ def lambda_handler(event, context):
             'body': json.dumps({
                 'message': 'Price updated successfully',
                 'asin': asin,
-                'old_price': lowest_price,
+                'featured_offer_price': featured_offer_price,
                 'new_price': round(new_price, 2),
                 'business_price': round(business_price, 2)
             })

@@ -98,6 +98,9 @@ def main():
         
         # Convert to DynamicFrame and write to DynamoDB
         dynf = DynamicFrame.fromDF(df, glueContext, "dframe")
+
+        dynf.printSchema()
+        dynf.show()
         
         glueContext.write_dynamic_frame.from_options(
             frame=dynf,

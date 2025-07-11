@@ -64,3 +64,12 @@ npx cdk deploy
 └── test/
     └── terratree-repricer.test.ts      # Unit tests
 ```
+## Repricing logic:
+
+1. Check if we're already featured - Exit early if our seller ID (AERPN1UM8O1I4) is already the featured offer
+
+2. Price 1 cent below featured offer - Set regular price to featured offer price minus $0.01
+
+3. Business price 1 cent below regular - Set business price to regular price minus $0.01
+
+4. Respect min/max constraints - Only reprice if above minimum price and below maximum price

@@ -2,6 +2,7 @@ import json
 import os
 import boto3
 import urllib3
+import time
 from decimal import Decimal
 
 dynamodb = boto3.resource('dynamodb')
@@ -21,6 +22,7 @@ def lambda_handler(event, context):
         # Parse SP-API notification
         payload = event.get('Payload', {})
         notification = payload.get('AnyOfferChangedNotification', {})
+        event_time = event.get('EventTime')
         
         # Extract ASIN and marketplace from OfferChangeTrigger
         trigger = notification.get('OfferChangeTrigger', {})
@@ -135,11 +137,12 @@ def lambda_handler(event, context):
                 'asin': asin,
                 'marketplace_id': marketplace_id
             },
-            UpdateExpression='SET updated_price = :price, business_price = :bprice, last_updated = :timestamp, competitor_offers = :offers',
+            UpdateExpression='SET updated_price = :price, business_price = :bprice, last_updated = :timestamp, last_updated_timestamp = :ts, competitor_offers = :offers',
             ExpressionAttributeValues={
                 ':price': Decimal(str(round(new_price, 2))),
                 ':bprice': Decimal(str(round(business_price, 2))),
                 ':timestamp': context.aws_request_id,
+                ':ts': int(time.mktime(time.strptime(event_time, '%Y-%m-%dT%H:%M:%S.%fZ'))),
                 ':offers': competitor_offers
             },
             ReturnValues='UPDATED_NEW'
@@ -147,9 +150,7 @@ def lambda_handler(event, context):
         
 
         
-        # Update SP-API prices using ASIN
-        print(f"Updating SP-API prices for ASIN: {asin}")
-        update_spapi_prices_by_asin(asin, new_price, business_price, marketplace_id)
+        # Price update will be handled by hourly poller
         
         return {
             'statusCode': 200,
@@ -169,13 +170,7 @@ def lambda_handler(event, context):
             'body': json.dumps(f'Error: {str(e)}')
         }
 
-def update_spapi_prices_by_asin(asin, regular_price, business_price, marketplace_id):
-    """Update prices via SP-API Product Pricing API using ASIN"""
-    access_token = os.environ.get('SPAPI_ACCESS_TOKEN')
-    
-    if not access_token:
-        print("No SP-API access token configured")
-        return
+
     
     headers = {
         'x-amz-access-token': access_token,

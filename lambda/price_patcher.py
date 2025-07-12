@@ -96,12 +96,20 @@ def get_access_token():
             'client_secret': spapi_creds['lwa_client_secret']
         }
         
-        import requests
-        response = requests.post(token_url, data=payload)
-        if response.status_code == 200:
-            return response.json().get('access_token')
+        import urllib.parse
+        http = urllib3.PoolManager()
+        encoded_data = urllib.parse.urlencode(payload)
+        response = http.request(
+            'POST',
+            token_url,
+            body=encoded_data,
+            headers={'Content-Type': 'application/x-www-form-urlencoded'}
+        )
+        if response.status == 200:
+            token_data = json.loads(response.data.decode('utf-8'))
+            return token_data.get('access_token')
         else:
-            print(f"Token refresh failed: {response.status_code} - {response.text}")
+            print(f"Token refresh failed: {response.status} - {response.data.decode('utf-8')}")
             return None
     except Exception as e:
         print(f"Error getting access token: {str(e)}")

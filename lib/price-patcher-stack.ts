@@ -12,9 +12,7 @@ export class PricePatcherStack extends Stack {
 
     // Reference secrets and DynamoDB table
     const dbSecret = secretsmanager.Secret.fromSecretNameV2(this, 'DatabaseSecret', 'terratree/production_db');
-    const lwaAppIdSecret = secretsmanager.Secret.fromSecretNameV2(this, 'LwaAppIdSecret', 'lwa_app_id');
-    const lwaClientSecret = secretsmanager.Secret.fromSecretNameV2(this, 'LwaClientSecret', 'lwa_client_secret');
-    const refreshTokenSecret = secretsmanager.Secret.fromSecretNameV2(this, 'RefreshTokenSecret', 'refresh_token');
+    const spapiSecret = secretsmanager.Secret.fromSecretNameV2(this, 'SpapiSecret', 'terratreeOrders/spapi');
     const productsTable = dynamodb.Table.fromTableName(this, 'ProductsTable', 'terratree-products');
 
     // Price Patcher Lambda
@@ -25,10 +23,7 @@ export class PricePatcherStack extends Stack {
       environment: {
         DYNAMODB_TABLE: 'terratree-products',
         MARKETPLACE_ID: 'ATVPDKIKX0DER',
-        DB_SECRET_ARN: dbSecret.secretArn,
-        LWA_APP_ID_SECRET_ARN: lwaAppIdSecret.secretArn,
-        LWA_CLIENT_SECRET_ARN: lwaClientSecret.secretArn,
-        REFRESH_TOKEN_SECRET_ARN: refreshTokenSecret.secretArn
+        DB_SECRET_ARN: dbSecret.secretArn
       },
       timeout: Duration.minutes(5),
       memorySize: 512
@@ -37,9 +32,7 @@ export class PricePatcherStack extends Stack {
     // Grant DynamoDB and Secrets Manager access
     productsTable.grantReadWriteData(patcherLambda);
     dbSecret.grantRead(patcherLambda);
-    lwaAppIdSecret.grantRead(patcherLambda);
-    lwaClientSecret.grantRead(patcherLambda);
-    refreshTokenSecret.grantRead(patcherLambda);
+    spapiSecret.grantRead(patcherLambda);
 
     // Schedule hourly execution
     const hourlyRule = new events.Rule(this, 'HourlyPatcherTrigger', {

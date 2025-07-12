@@ -147,13 +147,9 @@ def lambda_handler(event, context):
         
 
         
-        # Update SP-API prices
-        sku = existing_item.get('sku')
-        if sku:
-            print(f"Found SKU: {sku}, updating SP-API prices")
-            update_spapi_prices(sku, new_price, business_price, marketplace_id)
-        else:
-            print("No SKU found in existing item, skipping SP-API update")
+        # Update SP-API prices using ASIN
+        print(f"Updating SP-API prices for ASIN: {asin}")
+        update_spapi_prices_by_asin(asin, new_price, business_price, marketplace_id)
         
         return {
             'statusCode': 200,
@@ -173,8 +169,8 @@ def lambda_handler(event, context):
             'body': json.dumps(f'Error: {str(e)}')
         }
 
-def update_spapi_prices(sku, regular_price, business_price, marketplace_id):
-    """Update prices via SP-API endpoints"""
+def update_spapi_prices_by_asin(asin, regular_price, business_price, marketplace_id):
+    """Update prices via SP-API Product Pricing API using ASIN"""
     access_token = os.environ.get('SPAPI_ACCESS_TOKEN')
     
     if not access_token:
@@ -186,52 +182,37 @@ def update_spapi_prices(sku, regular_price, business_price, marketplace_id):
         'Content-Type': 'application/json'
     }
     
-    # Calculate quantity discounts
-    quantity_discounts = [
-        {'quantity': 5, 'type': 'FIXED', 'amount': {'currency': 'USD', 'amount': round(business_price * 0.99, 2)}},
-        {'quantity': 10, 'type': 'FIXED', 'amount': {'currency': 'USD', 'amount': round(business_price * 0.98, 2)}},
-        {'quantity': 25, 'type': 'FIXED', 'amount': {'currency': 'USD', 'amount': round(business_price * 0.97, 2)}},
-        {'quantity': 50, 'type': 'FIXED', 'amount': {'currency': 'USD', 'amount': round(business_price * 0.96, 2)}},
-        {'quantity': 100, 'type': 'FIXED', 'amount': {'currency': 'USD', 'amount': round(business_price * 0.95, 2)}}
-    ]
-    
-    # Update with both regular and business pricing
+    # Submit price update using Product Pricing API
     payload = {
-        'productType': 'PRODUCT',
-        'patches': [
-            {
-                'op': 'replace',
-                'path': '/attributes/purchasable_offer',
-                'value': [{
-                    'marketplace_id': marketplace_id,
-                    'currency': 'USD',
-                    'our_price': [{'schedule': [{'value_with_tax': regular_price}]}]
-                }]
-            },
-            {
-                'op': 'replace',
-                'path': '/attributes/businessPricing',
-                'value': {
-                    'businessPrice': {
-                        'currency': 'USD',
-                        'amount': business_price
-                    },
-                    'quantityDiscounts': quantity_discounts
+        'requests': [{
+            'uri': f'/products/pricing/v0/price',
+            'method': 'POST',
+            'body': {
+                'MarketplaceId': marketplace_id,
+                'ASIN': asin,
+                'PriceToUse': 'BusinessPrice',
+                'RegularPrice': {
+                    'Amount': regular_price,
+                    'CurrencyCode': 'USD'
+                },
+                'BusinessPrice': {
+                    'Amount': business_price,
+                    'CurrencyCode': 'USD'
                 }
             }
-        ]
+        }]
     }
     
     try:
-        print(f"Sending PATCH request for SKU: {sku}, Regular Price: {regular_price}, Business Price: {business_price}")
+        print(f"Sending price update for ASIN: {asin}, Regular: ${regular_price}, Business: ${business_price}")
         http = urllib3.PoolManager()
         response = http.request(
-            'PATCH',
-            f'https://sellingpartnerapi-na.amazon.com/listings/2021-08-01/items/{sku}?marketplaceIds={marketplace_id}',
+            'POST',
+            f'https://sellingpartnerapi-na.amazon.com/products/pricing/v0/offers/{asin}/batch',
             headers=headers,
             body=json.dumps(payload)
         )
-        print(f"SP-API PATCH response status: {response.status}")
+        print(f"SP-API price update response status: {response.status}")
         
     except Exception as e:
         print(f"Error updating SP-API prices: {str(e)}")

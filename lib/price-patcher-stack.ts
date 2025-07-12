@@ -6,7 +6,7 @@ import * as targets from 'aws-cdk-lib/aws-events-targets';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 
-export class SpapiPollerStack extends Stack {
+export class PricePatcherStack extends Stack {
   constructor(scope: Construct, id: string, props?: StackProps) {
     super(scope, id, props);
 
@@ -17,10 +17,10 @@ export class SpapiPollerStack extends Stack {
     const refreshTokenSecret = secretsmanager.Secret.fromSecretNameV2(this, 'RefreshTokenSecret', 'refresh_token');
     const productsTable = dynamodb.Table.fromTableName(this, 'ProductsTable', 'terratree-products');
 
-    // SP-API Poller Lambda
-    const pollerLambda = new lambda.Function(this, 'SpapiPollerHandler', {
+    // Price Patcher Lambda
+    const patcherLambda = new lambda.Function(this, 'PricePatcherHandler', {
       runtime: lambda.Runtime.PYTHON_3_11,
-      handler: 'spapi_poller.lambda_handler',
+      handler: 'price_patcher.lambda_handler',
       code: lambda.Code.fromAsset('lambda'),
       environment: {
         DYNAMODB_TABLE: 'terratree-products',
@@ -35,17 +35,17 @@ export class SpapiPollerStack extends Stack {
     });
 
     // Grant DynamoDB and Secrets Manager access
-    productsTable.grantReadWriteData(pollerLambda);
-    dbSecret.grantRead(pollerLambda);
-    lwaAppIdSecret.grantRead(pollerLambda);
-    lwaClientSecret.grantRead(pollerLambda);
-    refreshTokenSecret.grantRead(pollerLambda);
+    productsTable.grantReadWriteData(patcherLambda);
+    dbSecret.grantRead(patcherLambda);
+    lwaAppIdSecret.grantRead(patcherLambda);
+    lwaClientSecret.grantRead(patcherLambda);
+    refreshTokenSecret.grantRead(patcherLambda);
 
     // Schedule hourly execution
-    const hourlyRule = new events.Rule(this, 'HourlyPollerTrigger', {
+    const hourlyRule = new events.Rule(this, 'HourlyPatcherTrigger', {
       schedule: events.Schedule.rate(Duration.hours(1))
     });
     
-    hourlyRule.addTarget(new targets.LambdaFunction(pollerLambda));
+    hourlyRule.addTarget(new targets.LambdaFunction(patcherLambda));
   }
 }

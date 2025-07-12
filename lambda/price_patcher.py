@@ -1,7 +1,8 @@
 import json
 import os
 import boto3
-import requests
+import httpx
+import asyncio
 from decimal import Decimal
 from db_utils import get_db_connection
 from spapi_utils import get_spapi_credentials
@@ -9,13 +10,15 @@ from spapi_utils import get_spapi_credentials
 dynamodb = boto3.resource('dynamodb')
 
 def lambda_handler(event, context):
+    return asyncio.run(async_lambda_handler(event, context))
+
+async def async_lambda_handler(event, context):
     """
     Lambda function to poll SP-API hourly for pricing data
     """
     
     table_name = os.environ['DYNAMODB_TABLE']
     marketplace_id = os.environ['MARKETPLACE_ID']
-    spapi_creds = get_spapi_credentials()
     
     table = dynamodb.Table(table_name)
     
@@ -52,16 +55,16 @@ def lambda_handler(event, context):
                     'body': create_patch_payload(updated_price, business_price, marketplace_id)
                 })
         
-        # Send batch requests
+        # Send parallel PATCH requests
         updated_count = 0
         if batch_requests:
-            success_count = send_batch_patch_requests(batch_requests, access_token)
-            updated_count = success_count
+            success_asins = await send_parallel_patch_requests(response['Items'], access_token, marketplace_id)
+            updated_count = len(success_asins)
             
             # Remove updated_price flag for successfully updated items
-            for item in response['Items'][:success_count]:
+            for asin in success_asins:
                 table.update_item(
-                    Key={'asin': item['asin'], 'marketplace_id': marketplace_id},
+                    Key={'asin': asin, 'marketplace_id': marketplace_id},
                     UpdateExpression='REMOVE updated_price'
                 )
         
@@ -74,7 +77,7 @@ def lambda_handler(event, context):
         }
         
     except Exception as e:
-        print(f"Error in SP-API polling: {str(e)}")
+        print(f"Error in price patching: {str(e)}")
         return {
             'statusCode': 500,
             'body': json.dumps(f'Error: {str(e)}')
@@ -93,6 +96,7 @@ def get_access_token():
             'client_secret': spapi_creds['lwa_client_secret']
         }
         
+        import requests
         response = requests.post(token_url, data=payload)
         if response.status_code == 200:
             return response.json().get('access_token')
@@ -142,32 +146,52 @@ def create_patch_payload(regular_price, business_price, marketplace_id):
         ]
     }
 
-def send_batch_patch_requests(batch_requests, access_token):
-    """Send batch PATCH requests to Listings API"""
+async def patch_single_item(client, asin, regular_price, business_price, marketplace_id, access_token):
+    """Send single PATCH request for one item"""
     headers = {
         'x-amz-access-token': access_token,
         'Content-Type': 'application/json'
     }
     
-    payload = {'requests': batch_requests}
+    payload = create_patch_payload(regular_price, business_price, marketplace_id)
     
     try:
-        print(f"Sending batch PATCH for {len(batch_requests)} items")
-        response = requests.post(
-            'https://sellingpartnerapi-na.amazon.com/listings/2021-08-01/items/batch',
+        response = await client.patch(
+            f'https://sellingpartnerapi-na.amazon.com/listings/2021-08-01/items/{asin}',
             headers=headers,
-            json=payload
+            json=payload,
+            params={'marketplaceIds': marketplace_id}
         )
         
         if response.status_code == 200:
-            result = response.json()
-            success_count = sum(1 for r in result.get('responses', []) if r.get('status', {}).get('code') == 200)
-            print(f"Batch update completed: {success_count}/{len(batch_requests)} successful")
-            return success_count
+            print(f"Successfully updated ASIN {asin}")
+            return asin
         else:
-            print(f"Batch update failed: {response.status_code} - {response.text}")
-            return 0
+            print(f"Failed to update ASIN {asin}: {response.status_code}")
+            return None
             
     except Exception as e:
-        print(f"Error in batch update: {str(e)}")
-        return 0
+        print(f"Error updating ASIN {asin}: {str(e)}")
+        return None
+
+async def send_parallel_patch_requests(items, access_token, marketplace_id):
+    """Send parallel PATCH requests using httpx"""
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        tasks = []
+        for item in items:
+            asin = item['asin']
+            updated_price = float(item.get('updated_price', 0))
+            business_price = float(item.get('business_price', 0))
+            
+            if updated_price > 0:
+                task = patch_single_item(client, asin, updated_price, business_price, marketplace_id, access_token)
+                tasks.append(task)
+        
+        print(f"Sending {len(tasks)} parallel PATCH requests")
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Filter successful results
+        success_asins = [asin for asin in results if asin and not isinstance(asin, Exception)]
+        print(f"Parallel update completed: {len(success_asins)}/{len(tasks)} successful")
+        
+        return success_asins

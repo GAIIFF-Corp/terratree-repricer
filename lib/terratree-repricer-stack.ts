@@ -8,7 +8,7 @@ import * as targets from 'aws-cdk-lib/aws-events-targets';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as s3deploy from 'aws-cdk-lib/aws-s3-deployment';
 import { PriceUpdateLambdaStack } from './price-update-lambda-stack';
-import { SpapiPollerStack } from './spapi-poller-stack';
+import { PricePatcherStack } from './price-patcher-stack';
 
 
 export class TerratreeRepricerStack extends Stack {
@@ -94,8 +94,8 @@ export class TerratreeRepricerStack extends Stack {
     // Add the Price Update Lambda Stack
     new PriceUpdateLambdaStack(this, 'PriceUpdateLambda');
     
-    // Add the SP-API Poller Lambda Stack
-    new SpapiPollerStack(this, 'SpapiPoller');
+    // Add the Price Patcher Lambda Stack
+    new PricePatcherStack(this, 'PricePatcher');
 
   }
 }

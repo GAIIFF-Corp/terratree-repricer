@@ -1,7 +1,6 @@
 import json
 import os
 import boto3
-import urllib3
 import time
 from decimal import Decimal
 
@@ -169,45 +168,3 @@ def lambda_handler(event, context):
             'statusCode': 500,
             'body': json.dumps(f'Error: {str(e)}')
         }
-
-
-    
-    headers = {
-        'x-amz-access-token': access_token,
-        'Content-Type': 'application/json'
-    }
-    
-    # Submit price update using Product Pricing API
-    payload = {
-        'requests': [{
-            'uri': f'/products/pricing/v0/price',
-            'method': 'POST',
-            'body': {
-                'MarketplaceId': marketplace_id,
-                'ASIN': asin,
-                'PriceToUse': 'BusinessPrice',
-                'RegularPrice': {
-                    'Amount': regular_price,
-                    'CurrencyCode': 'USD'
-                },
-                'BusinessPrice': {
-                    'Amount': business_price,
-                    'CurrencyCode': 'USD'
-                }
-            }
-        }]
-    }
-    
-    try:
-        print(f"Sending price update for ASIN: {asin}, Regular: ${regular_price}, Business: ${business_price}")
-        http = urllib3.PoolManager()
-        response = http.request(
-            'POST',
-            f'https://sellingpartnerapi-na.amazon.com/products/pricing/v0/offers/{asin}/batch',
-            headers=headers,
-            body=json.dumps(payload)
-        )
-        print(f"SP-API price update response status: {response.status}")
-        
-    except Exception as e:
-        print(f"Error updating SP-API prices: {str(e)}")

@@ -1,10 +1,11 @@
 import json
 import os
 import boto3
-import httpx
+import urllib3
 import asyncio
+import concurrent.futures
+import time
 from decimal import Decimal
-from db_utils import get_db_connection
 from spapi_utils import get_spapi_credentials
 
 dynamodb = boto3.resource('dynamodb')
@@ -33,7 +34,6 @@ async def async_lambda_handler(event, context):
         
         # Scan DynamoDB for items updated in the last hour
         from boto3.dynamodb.conditions import Attr
-        import time
         
         one_hour_ago = int(time.time()) - 3600
         
@@ -146,7 +146,7 @@ def create_patch_payload(regular_price, business_price, marketplace_id):
         ]
     }
 
-async def patch_single_item(client, asin, regular_price, business_price, marketplace_id, access_token):
+def patch_single_item(asin, regular_price, business_price, marketplace_id, access_token):
     """Send single PATCH request for one item"""
     headers = {
         'x-amz-access-token': access_token,
@@ -156,18 +156,19 @@ async def patch_single_item(client, asin, regular_price, business_price, marketp
     payload = create_patch_payload(regular_price, business_price, marketplace_id)
     
     try:
-        response = await client.patch(
-            f'https://sellingpartnerapi-na.amazon.com/listings/2021-08-01/items/{asin}',
+        http = urllib3.PoolManager()
+        response = http.request(
+            'PATCH',
+            f'https://sellingpartnerapi-na.amazon.com/listings/2021-08-01/items/{asin}?marketplaceIds={marketplace_id}',
             headers=headers,
-            json=payload,
-            params={'marketplaceIds': marketplace_id}
+            body=json.dumps(payload)
         )
         
-        if response.status_code == 200:
+        if response.status == 200:
             print(f"Successfully updated ASIN {asin}")
             return asin
         else:
-            print(f"Failed to update ASIN {asin}: {response.status_code}")
+            print(f"Failed to update ASIN {asin}: {response.status}")
             return None
             
     except Exception as e:
@@ -175,8 +176,10 @@ async def patch_single_item(client, asin, regular_price, business_price, marketp
         return None
 
 async def send_parallel_patch_requests(items, access_token, marketplace_id):
-    """Send parallel PATCH requests using httpx"""
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    """Send parallel PATCH requests using ThreadPoolExecutor"""
+    loop = asyncio.get_event_loop()
+    
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
         tasks = []
         for item in items:
             asin = item['asin']
@@ -184,7 +187,11 @@ async def send_parallel_patch_requests(items, access_token, marketplace_id):
             business_price = float(item.get('business_price', 0))
             
             if updated_price > 0:
-                task = patch_single_item(client, asin, updated_price, business_price, marketplace_id, access_token)
+                task = loop.run_in_executor(
+                    executor, 
+                    patch_single_item, 
+                    asin, updated_price, business_price, marketplace_id, access_token
+                )
                 tasks.append(task)
         
         print(f"Sending {len(tasks)} parallel PATCH requests")
